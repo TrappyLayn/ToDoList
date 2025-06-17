@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>To-Do List</title>
+  <style>
+    body{margin:0;padding:0;font-family:'Roboto',sans-serif;background:#f0f2f5;color:#333;}
+    .container{max-width:400px;margin:50px auto;background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
+    h1,h2{text-align:center;margin-bottom:20px;color:#222;}
+    input{width:100%;padding:10px;margin:10px 0;border:1px solid #ccc;border-radius:8px;}
+    button{width:100%;padding:12px;margin:10px 0;background:#4a90e2;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;}
+    button:hover{background:#357ab7;}
+    .hidden{display:none;}
+    .message{padding:10px;border-radius:6px;margin:10px 0;font-size:14px;}
+    .error{background:#fdecea;color:#d93025;}
+    .success{background:#e6f4ea;color:#188038;}
+    table{width:100%;border-collapse:collapse;margin-top:20px;}
+    th,td{padding:10px;border-bottom:1px solid #e0e0e0;text-align:left;}
+    th{background:#fafafa;}
+    .tasks button{width:auto;padding:6px 10px;margin-right:5px;font-size:14px;}
+  </style>
+</head>
+<body>
+
+<div class="container" id="auth">
+  <h1>To-Do List</h1>
+  <div id="reg-msg"></div>
+  <h2>Регистрация</h2>
+  <input id="reg-user" placeholder="Имя пользователя">
+  <input id="reg-email" type="email" placeholder="Email">
+  <input id="reg-pass" type="password" placeholder="Пароль">
+  <button onclick="register()">Зарегистрироваться</button>
+
+  <div id="login-msg"></div>
+  <h2>Вход</h2>
+  <input id="log-email" type="email" placeholder="Email">
+  <input id="log-pass" type="password" placeholder="Пароль">
+  <button onclick="login()">Войти</button>
+</div>
+
+<div class="container hidden" id="app">
+  <h1>Мои задачи</h1>
+  <div id="task-msg"></div>
+  <input id="new-task" placeholder="Новая задача"><button onclick="addTask()">Добавить</button>
+  <table class="tasks">
+    <thead><tr><th>#</th><th>Задача</th><th>✓</th><th>Действия</th></tr></thead>
+    <tbody id="tasks"></tbody>
+  </table>
+</div>
+
+<script>
+let token = null;
+function clearMsg(id){document.getElementById(id).innerHTML='';}
+function showMsg(id,text,cls){clearMsg(id);const d=document.createElement('div');d.className='message '+cls;d.textContent=text;document.getElementById(id).append(d);}
+
+async function register(){
+  clearMsg('reg-msg');
+  const u=document.getElementById('reg-user').value.trim(),
+        e=document.getElementById('reg-email').value.trim(),
+        p=document.getElementById('reg-pass').value;
+  if(!u||!e||!p){showMsg('reg-msg','Все поля обязательны','error');return;}
+  const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:u,email:e,pass:p})});
+  if(r.status===201)showMsg('reg-msg','Успешно! Войдите','success');
+  else if(r.status===409)showMsg('reg-msg','Такой пользователь уже есть','error');
+  else showMsg('reg-msg','Ошибка сервера','error');
+}
+
+async function login(){
+  clearMsg('login-msg');
+  const e=document.getElementById('log-email').value.trim(),
+        p=document.getElementById('log-pass').value;
+  if(!e||!p){showMsg('login-msg','Введите email и пароль','error');return;}
+  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,pass:p})});
+  if(r.status===200){const d=await r.json();token=d.token;document.getElementById('auth').classList.add('hidden');document.getElementById('app').classList.remove('hidden');loadTasks();}
+  else showMsg('login-msg','Неверные данные','error');
+}
+
+async function loadTasks(){
+  clearMsg('task-msg');
+  const r=await fetch('/tasks',{headers:{Authorization:`Bearer ${token}`}});
+  const j=await r.json();document.getElementById('tasks').innerHTML=j.rows;
+}
+
+async function addTask(){
+  clearMsg('task-msg');
+  const t=document.getElementById('new-task').value.trim();
+  if(!t){showMsg('task-msg','Текст задачи не может быть пустым','error');return;}
+  await fetch('/tasks',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({text:t})});
+  loadTasks();
+}
+
+async function toggleTask(id,done){await fetch(`/tasks/${id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({completed:done?0:1})});loadTasks();}
+
+async function editTask(id,oldT){
+  const n=prompt('Изменить задачу:',oldT);
+  if(n!==null){ if(!n.trim()){showMsg('task-msg','Текст не может быть пустым','error');return;} await fetch(`/tasks/${id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({text:n})});loadTasks();}
+}
+
+async function deleteTask(id){await fetch(`/tasks/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});loadTasks();}
+</script>
+
+</body>
+</html>
