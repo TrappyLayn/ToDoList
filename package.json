@@ -1,7 +1,7 @@
 {
   "name": "op3kurs",
   "version": "1.0.0",
-  "description": "To-Do List with JWT auth and SQLite",
+  "description": "To-Do List with JWT auth, SQLite and Telegram Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -11,7 +11,9 @@
     "better-sqlite3": "^9.0.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.3.1",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "telegraf": "^4.12.2",
+    "axios": "^1.6.8"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

@@ -1,104 +1,149 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>To-Do List</title>
   <style>
-    body{margin:0;padding:0;font-family:'Roboto',sans-serif;background:#f0f2f5;color:#333;}
-    .container{max-width:400px;margin:50px auto;background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
-    h1,h2{text-align:center;margin-bottom:20px;color:#222;}
-    input{width:100%;padding:10px;margin:10px 0;border:1px solid #ccc;border-radius:8px;}
-    button{width:100%;padding:12px;margin:10px 0;background:#4a90e2;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;}
-    button:hover{background:#357ab7;}
-    .hidden{display:none;}
-    .message{padding:10px;border-radius:6px;margin:10px 0;font-size:14px;}
-    .error{background:#fdecea;color:#d93025;}
-    .success{background:#e6f4ea;color:#188038;}
-    table{width:100%;border-collapse:collapse;margin-top:20px;}
-    th,td{padding:10px;border-bottom:1px solid #e0e0e0;text-align:left;}
-    th{background:#fafafa;}
-    .tasks button{width:auto;padding:6px 10px;margin-right:5px;font-size:14px;}
+    body { background: #f0f4f8; font-family: 'Segoe UI', Tahoma, sans-serif; color: #333; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h1,h2 { text-align: center; color: #2c3e50; }
+    .auth { display: flex; justify-content: space-around; margin-bottom: 20px; }
+    .auth div { width: 45%; }
+    input { width: 100%; padding: 8px; margin: 6px 0; border: 1px solid #ccc; border-radius: 4px; }
+    button { width: 100%; padding: 10px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #2980b9; }
+    table { width: 100%; border-collapse: collapse; }
+    th,td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
+  <div class="container">
+    <h1>To-Do List</h1>
+    <section class="auth">
+      <div id="register">
+        <h2>Регистрация</h2>
+        <input id="reg-username" placeholder="Логин" />
+        <input id="reg-password" type="password" placeholder="Пароль" />
+        <button onclick="register()">Зарегистрироваться</button>
+      </div>
+      <div id="login">
+        <h2>Вход</h2>
+        <input id="login-username" placeholder="Логин" />
+        <input id="login-password" type="password" placeholder="Пароль" />
+        <button onclick="login()">Войти</button>
+      </div>
+    </section>
 
-<div class="container" id="auth">
-  <h1>To-Do List</h1>
-  <div id="reg-msg"></div>
-  <h2>Регистрация</h2>
-  <input id="reg-user" placeholder="Имя пользователя">
-  <input id="reg-email" type="email" placeholder="Email">
-  <input id="reg-pass" type="password" placeholder="Пароль">
-  <button onclick="register()">Зарегистрироваться</button>
+    <section id="tasks-section" class="hidden">
+      <h2>Мои задачи</h2>
+      <input id="new-task-text" placeholder="Новая задача" />
+      <button onclick="addTask()">Добавить</button>
+      <table>
+        <thead><tr><th>#</th><th>Задача</th><th>Статус</th><th>Действия</th></tr></thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+    </section>
+  </div>
 
-  <div id="login-msg"></div>
-  <h2>Вход</h2>
-  <input id="log-email" type="email" placeholder="Email">
-  <input id="log-pass" type="password" placeholder="Пароль">
-  <button onclick="login()">Войти</button>
-</div>
+  <script>
+    let token = '';
 
-<div class="container hidden" id="app">
-  <h1>Мои задачи</h1>
-  <div id="task-msg"></div>
-  <input id="new-task" placeholder="Новая задача"><button onclick="addTask()">Добавить</button>
-  <table class="tasks">
-    <thead><tr><th>#</th><th>Задача</th><th>✓</th><th>Действия</th></tr></thead>
-    <tbody id="tasks"></tbody>
-  </table>
-</div>
+    async function register() {
+      const username = document.getElementById('reg-username').value;
+      const password = document.getElementById('reg-password').value;
+      const res = await fetch('/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      alert(res.ok ? 'Зарегистрировано' : 'Ошибка регистрации');
+    }
 
-<script>
-let token = null;
-function clearMsg(id){document.getElementById(id).innerHTML='';}
-function showMsg(id,text,cls){clearMsg(id);const d=document.createElement('div');d.className='message '+cls;d.textContent=text;document.getElementById(id).append(d);}
+    async function login() {
+      const username = document.getElementById('login-username').value;
+      const password = document.getElementById('login-password').value;
+      const res = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      if (res.ok) {
+        token = (await res.json()).token;
+        document.querySelector('.auth').classList.add('hidden');
+        document.getElementById('tasks-section').classList.remove('hidden');
+        loadTasks();
+      } else alert('Ошибка входа');
+    }
 
-async function register(){
-  clearMsg('reg-msg');
-  const u=document.getElementById('reg-user').value.trim(),
-        e=document.getElementById('reg-email').value.trim(),
-        p=document.getElementById('reg-pass').value;
-  if(!u||!e||!p){showMsg('reg-msg','Все поля обязательны','error');return;}
-  const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:u,email:e,pass:p})});
-  if(r.status===201)showMsg('reg-msg','Успешно! Войдите','success');
-  else if(r.status===409)showMsg('reg-msg','Такой пользователь уже есть','error');
-  else showMsg('reg-msg','Ошибка сервера','error');
-}
+    async function addTask() {
+      const text = document.getElementById('new-task-text').value;
+      await fetch('/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ text })
+      });
+      loadTasks();
+    }
 
-async function login(){
-  clearMsg('login-msg');
-  const e=document.getElementById('log-email').value.trim(),
-        p=document.getElementById('log-pass').value;
-  if(!e||!p){showMsg('login-msg','Введите email и пароль','error');return;}
-  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,pass:p})});
-  if(r.status===200){const d=await r.json();token=d.token;document.getElementById('auth').classList.add('hidden');document.getElementById('app').classList.remove('hidden');loadTasks();}
-  else showMsg('login-msg','Неверные данные','error');
-}
+    async function loadTasks() {
+      const res = await fetch('/tasks', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) return;
+      const tasks = await res.json();
+      document.getElementById('tasks-body').innerHTML = tasks.map((t, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${t.text}</td>
+          <td>${t.completed ? '✔' : '—'}</td>
+          <td>
+            <button onclick="editTask(${t.id}, '${t.text.replace(/'/g, "\\'")}')">Изменить</button>
+            <button onclick="toggleCompleted(${t.id}, ${t.completed})">
+              ${t.completed ? 'Отменить' : 'Выполнить'}
+            </button>
+            <button onclick="deleteTask(${t.id})">Удалить</button>
+          </td>
+        </tr>`).join('');
+    }
 
-async function loadTasks(){
-  clearMsg('task-msg');
-  const r=await fetch('/tasks',{headers:{Authorization:`Bearer ${token}`}});
-  const j=await r.json();document.getElementById('tasks').innerHTML=j.rows;
-}
+    async function editTask(id, oldText) {
+      const newText = prompt('Изменить задачу:', oldText); // Диалог ввода нового текста​[1]
+      if (!newText || !newText.trim()) return;
+      await fetch(`/tasks/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ text: newText })       // Отправка обновлённого текста​[2]
+      });
+      loadTasks();
+    }
 
-async function addTask(){
-  clearMsg('task-msg');
-  const t=document.getElementById('new-task').value.trim();
-  if(!t){showMsg('task-msg','Текст задачи не может быть пустым','error');return;}
-  await fetch('/tasks',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({text:t})});
-  loadTasks();
-}
+    async function toggleCompleted(id, completed) {
+      await fetch(`/tasks/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ completed: completed ? 0 : 1 })
+      });
+      loadTasks();
+    }
 
-async function toggleTask(id,done){await fetch(`/tasks/${id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({completed:done?0:1})});loadTasks();}
-
-async function editTask(id,oldT){
-  const n=prompt('Изменить задачу:',oldT);
-  if(n!==null){ if(!n.trim()){showMsg('task-msg','Текст не может быть пустым','error');return;} await fetch(`/tasks/${id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({text:n})});loadTasks();}
-}
-
-async function deleteTask(id){await fetch(`/tasks/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});loadTasks();}
-</script>
-
+    async function deleteTask(id) {
+      await fetch(`/tasks/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      loadTasks();
+    }
+  </script>
 </body>
 </html>
