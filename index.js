@@ -6,18 +6,150 @@ const url = require('url');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
+const { Telegraf } = require('telegraf');
+const axios = require('axios');
 
 const db = new sqlite3.Database(process.env.DB_PATH);
-
-// Инициализация базы данных
-const initSql = fs.readFileSync('database.sql', 'utf8');
-db.exec(initSql);
+db.exec(fs.readFileSync('database.sql', 'utf8'));
 
 const port = process.env.PORT || 3000;
+const API_BASE = process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
+
+const sessions = new Map();
+
+const bot = new Telegraf(process.env.BOT_TOKEN);
+
+const commands = [
+  { command: 'register', description: 'Регистрация: /register имя пароль' },
+  { command: 'login',    description: 'Вход: /login имя пароль' },
+  { command: 'tasks',    description: 'Список задач' },
+  { command: 'add',      description: 'Добавить задачу: /add текст задачи' },
+  { command: 'edit',     description: 'Изменить задачу: /edit id новый_текст' },
+  { command: 'done',     description: 'Отметить задачу выполненной: /done id' },
+  { command: 'del',      description: 'Удалить задачу: /del id' }
+];
+
+bot.start(ctx => ctx.reply('Я — ваш To-Do бот!\n\n' + commands.map(c => `/${c.command} — ${c.description}`).join('\n')));
+bot.command('help', ctx => ctx.reply('Доступные команды:\n' + commands.map(c => `/${c.command} — ${c.description}`).join('\n')));
+
+bot.command('register', async ctx => {
+  const [ , username, password ] = ctx.message.text.split(' ');
+  if (!username || !password) return ctx.reply('Использование: /register имя пароль');
+  try {
+    await axios.post(`${API_BASE}/register`, { username, password });
+    ctx.reply('Регистрация успешна');
+  } catch {
+    ctx.reply('Ошибка регистрации');
+  }
+});
+
+bot.command('login', async ctx => {
+  const [ , username, password ] = ctx.message.text.split(' ');
+  if (!username || !password) return ctx.reply('Использование: /login имя пароль');
+  try {
+    const resp = await axios.post(`${API_BASE}/login`, { username, password });
+    sessions.set(ctx.chat.id, resp.data.token);
+    ctx.reply('Вход выполнен');
+  } catch {
+    ctx.reply('Неправильные логин или пароль');
+  }
+});
+
+bot.command('tasks', async ctx => {
+  const token = sessions.get(ctx.chat.id);
+  if (!token) return ctx.reply('Сначала войдите через /login');
+  try {
+    const resp = await axios.get(`${API_BASE}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const text = resp.data.map(t => `#${t.id}. ${t.text} [${t.completed ? '✓' : ' '}]`).join('\n');
+    ctx.reply(text || 'Нет задач');
+  } catch {
+    ctx.reply('Ошибка получения задач');
+  }
+});
+
+bot.command('add', async ctx => {
+  const token = sessions.get(ctx.chat.id);
+  if (!token) return ctx.reply('Сначала войдите через /login');
+  const text = ctx.message.text.replace('/add', '').trim();
+  if (!text) return ctx.reply('Укажите текст задачи');
+  try {
+    await axios.post(`${API_BASE}/tasks`, { text }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    ctx.reply('Задача добавлена');
+  } catch {
+    ctx.reply('Ошибка добавления');
+  }
+});
+
+bot.command('edit', async ctx => {
+  const token = sessions.get(ctx.chat.id);
+  if (!token) return ctx.reply('Сначала войдите через /login');
+  const match = ctx.message.text.match(/^\/edit\s+(\d+)\s+(.+)/);
+  if (!match) return ctx.reply('Использование: /edit id новый_текст');
+  const [ , id, newText ] = match;
+  try {
+    await axios.put(`${API_BASE}/tasks/${id}`, { text: newText }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    ctx.reply(`Задача #${id} изменена`);
+  } catch {
+    ctx.reply('Ошибка изменения');
+  }
+});
+
+bot.command('done', async ctx => {
+  const token = sessions.get(ctx.chat.id);
+  if (!token) return ctx.reply('Сначала войдите через /login');
+  const id = ctx.message.text.split(' ')[1];
+  try {
+    await axios.put(`${API_BASE}/tasks/${id}`, { completed: 1 }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    ctx.reply(`Задача #${id} завершена`);
+  } catch {
+    ctx.reply('Ошибка');
+  }
+});
+
+bot.command('del', async ctx => {
+  const token = sessions.get(ctx.chat.id);
+  if (!token) return ctx.reply('Сначала войдите через /login');
+  const id = ctx.message.text.split(' ')[1];
+  try {
+    await axios.delete(`${API_BASE}/tasks/${id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    ctx.reply(`Задача #${id} удалена`);
+  } catch {
+    ctx.reply('Ошибка удаления');
+  }
+});
+
+// Webhook для Telegram
+const botWebhookPath = `/bot${process.env.BOT_TOKEN}`;
+bot.telegram.setWebhook(`${API_BASE}${botWebhookPath}`);
 
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname;
+
+  if (req.method === 'POST' && pathname === botWebhookPath) {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const update = JSON.parse(body);
+        bot.handleUpdate(update);
+        res.writeHead(200).end();
+      } catch {
+        res.writeHead(400).end();
+      }
+    });
+    return;
+  }
 
   if (req.method === 'GET') {
     if (pathname === '/' || pathname === '/index.html') {
@@ -142,5 +274,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`🚀 Сервер запущен на порту ${port}`);
+  console.log(`\u{1F680} Сервер запущен на порту ${port}`);
 });
