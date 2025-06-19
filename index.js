@@ -248,7 +248,15 @@ bot.command('del', async ctx => {
   }
 });
 
-setupBotCommands().then(() => {
-  bot.launch();
-  console.log('Бот Telegram запущен');
-});
+setupBotCommands()
+  .then(() => {
+    console.log('Запускаю бота...');
+    return bot.launch();
+  })
+  .then(() => {
+    console.log('✅ Бот Telegram запущен');
+  })
+  .catch(err => {
+    console.error('❌ Ошибка запуска бота:', err.message);
+  });
+
