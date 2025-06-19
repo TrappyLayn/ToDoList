@@ -1,139 +1,146 @@
 require('dotenv').config();
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const url = require('url');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { Telegraf } = require('telegraf');
-const axios = require('axios');
-
-const app = express();
-app.use(express.json());
+const sqlite3 = require('sqlite3').verbose();
 
 const db = new sqlite3.Database(process.env.DB_PATH);
-db.serialize(() => {
-  const schema = fs.readFileSync('database.sql', 'utf8');
-  db.exec(schema);
-});
 
-// ==== API Endpoints ====
-function authMiddleware(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) return res.sendStatus(401);
-  try {
-    req.user = jwt.verify(header.slice(7), process.env.JWT_SECRET);
-    next();
-  } catch {
-    res.sendStatus(403);
+// Инициализация базы данных
+const initSql = fs.readFileSync('database.sql', 'utf8');
+db.exec(initSql);
+
+const port = process.env.PORT || 3000;
+
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+
+  if (req.method === 'GET') {
+    if (pathname === '/' || pathname === '/index.html') {
+      const html = fs.readFileSync('index.html');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+    if (pathname.startsWith('/static/')) {
+      const filePath = path.join(__dirname, pathname);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath).toLowerCase();
+        const contentType = {
+          '.js': 'text/javascript',
+          '.css': 'text/css',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg'
+        }[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': contentType });
+        res.end(fs.readFileSync(filePath));
+      } else {
+        res.writeHead(404).end();
+      }
+      return;
+    }
   }
-}
 
-app.post('/register', (req, res) => {
-  const { username, password } = req.body;
-  const hash = bcrypt.hashSync(password, +process.env.BCRYPT_ROUNDS);
-  db.run('INSERT INTO users(username, password_hash) VALUES(?, ?)', [username, hash], function(err) {
-    if (err) return res.sendStatus(409);
-    res.sendStatus(201);
+  const parseBody = () => new Promise(resolve => {
+    let data = '';
+    req.on('data', chunk => data += chunk);
+    req.on('end', () => resolve(JSON.parse(data || '{}')));
   });
-});
 
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) return res.sendStatus(401);
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN });
-    res.json({ token });
-  });
-});
+  const authenticate = () => {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) {
+      res.writeHead(401).end();
+      return null;
+    }
+    try {
+      return jwt.verify(header.split(' ')[1], process.env.JWT_SECRET);
+    } catch {
+      res.writeHead(403).end();
+      return null;
+    }
+  };
 
-app.get('/tasks', authMiddleware, (req, res) => {
-  db.all('SELECT * FROM items WHERE user_id = ? ORDER BY created_at DESC', [req.user.id], (err, rows) => {
-    res.json(rows);
-  });
-});
-
-app.post('/tasks', authMiddleware, (req, res) => {
-  db.run('INSERT INTO items(text, user_id) VALUES(?, ?)', [req.body.text, req.user.id], err => {
-    if (err) return res.sendStatus(500);
-    res.sendStatus(201);
-  });
-});
-
-app.put('/tasks/:id', authMiddleware, (req, res) => {
-  const { text, completed } = req.body;
-  if (text !== undefined) {
-    db.run('UPDATE items SET text = ? WHERE id = ? AND user_id = ?', [text, req.params.id, req.user.id]);
+  // API endpoints
+  if (req.method === 'POST' && pathname === '/register') {
+    const { username, password } = await parseBody();
+    const hash = bcrypt.hashSync(password, +process.env.BCRYPT_ROUNDS);
+    db.run('INSERT INTO users(username, password_hash) VALUES(?, ?)', [username, hash], function (err) {
+      if (err) {
+        res.writeHead(409).end();
+      } else {
+        res.writeHead(201).end();
+      }
+    });
+    return;
   }
-  if (completed !== undefined) {
-    db.run('UPDATE items SET completed = ? WHERE id = ? AND user_id = ?', [completed, req.params.id, req.user.id]);
+
+  if (req.method === 'POST' && pathname === '/login') {
+    const { username, password } = await parseBody();
+    db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
+      if (err || !user || !bcrypt.compareSync(password, user.password_hash)) {
+        res.writeHead(401).end();
+        return;
+      }
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ token }));
+    });
+    return;
   }
-  res.sendStatus(200);
-});
 
-app.delete('/tasks/:id', authMiddleware, (req, res) => {
-  db.run('DELETE FROM items WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
-  res.sendStatus(204);
-});
+  const auth = authenticate();
+  if (!auth) return;
 
-app.get('/', (req, res) => {
-  res.send('Сервер работает. To-Do Bot');
-});
-
-// ==== Telegram Bot ====
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const api = process.env.RENDER_EXTERNAL_URL;
-const sessions = new Map();
-
-bot.start(ctx => ctx.reply('Привет! Используй /register и /login'));
-bot.command('register', async ctx => {
-  const [ , u, p ] = ctx.message.text.split(' ');
-  if (!u || !p) return ctx.reply('Использование: /register имя пароль');
-  try {
-    await axios.post(`${api}/register`, { username: u, password: p });
-    ctx.reply('Регистрация успешна');
-  } catch {
-    ctx.reply('Ошибка регистрации');
+  if (req.method === 'POST' && pathname === '/tasks') {
+    const { text } = await parseBody();
+    db.run('INSERT INTO items(text, user_id) VALUES(?, ?)', [text, auth.id], function (err) {
+      if (err) res.writeHead(500).end();
+      else res.writeHead(201).end();
+    });
+    return;
   }
-});
-bot.command('login', async ctx => {
-  const [ , u, p ] = ctx.message.text.split(' ');
-  try {
-    const r = await axios.post(`${api}/login`, { username: u, password: p });
-    sessions.set(ctx.chat.id, r.data.token);
-    ctx.reply('Вход успешен');
-  } catch {
-    ctx.reply('Ошибка входа');
+
+  if (req.method === 'GET' && pathname === '/tasks') {
+    db.all('SELECT * FROM items WHERE user_id = ? ORDER BY created_at DESC', [auth.id], (err, rows) => {
+      if (err) res.writeHead(500).end();
+      else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows));
+      }
+    });
+    return;
   }
-});
-bot.command('tasks', async ctx => {
-  const token = sessions.get(ctx.chat.id);
-  if (!token) return ctx.reply('Сначала войдите через /login');
-  try {
-    const r = await axios.get(`${api}/tasks`, { headers: { Authorization: `Bearer ${token}` } });
-    ctx.reply(r.data.map(t => `#${t.id} ${t.text} ${t.completed ? '✓' : ''}`).join('\n') || 'Нет задач');
-  } catch {
-    ctx.reply('Ошибка получения');
+
+  if (req.method === 'PUT' && pathname.startsWith('/tasks/')) {
+    const id = +pathname.split('/')[2];
+    const { text, completed } = await parseBody();
+    if (text !== undefined) {
+      db.run('UPDATE items SET text = ? WHERE id = ? AND user_id = ?', [text, id, auth.id]);
+    }
+    if (completed !== undefined) {
+      db.run('UPDATE items SET completed = ? WHERE id = ? AND user_id = ?', [completed, id, auth.id]);
+    }
+    res.writeHead(200).end();
+    return;
   }
-});
-bot.command('add', async ctx => {
-  const token = sessions.get(ctx.chat.id);
-  const text = ctx.message.text.replace('/add', '').trim();
-  if (!token || !text) return ctx.reply('Используйте /add текст');
-  try {
-    await axios.post(`${api}/tasks`, { text }, { headers: { Authorization: `Bearer ${token}` } });
-    ctx.reply('Добавлено');
-  } catch {
-    ctx.reply('Ошибка');
+
+  if (req.method === 'DELETE' && pathname.startsWith('/tasks/')) {
+    const id = +pathname.split('/')[2];
+    db.run('DELETE FROM items WHERE id = ? AND user_id = ?', [id, auth.id], function (err) {
+      if (err) res.writeHead(500).end();
+      else res.writeHead(204).end();
+    });
+    return;
   }
+
+  res.writeHead(404).end();
 });
 
-// ==== Запуск ====
-app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
-bot.telegram.setWebhook(`${api}/bot${process.env.BOT_TOKEN}`)
-  .then(() => console.log(`✅ Webhook установлен: ${api}/bot${process.env.BOT_TOKEN}`))
-  .catch(console.error);
-
-app.listen(process.env.PORT, () => {
-  console.log(`🚀 Сервер на порту ${process.env.PORT}`);
+server.listen(port, () => {
+  console.log(`🚀 Сервер запущен на порту ${port}`);
 });
